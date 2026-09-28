@@ -14,4 +14,3 @@ rapidocr_onnxruntime==1.4.4
 opencv-python==5.0.0.93
 matplotlib==3.10.8
 ipykernel==7.2.0
-kaggle==2.2.4
