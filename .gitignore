@@ -4,16 +4,19 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 
-# тест выдаётся отдельно
+# тестовые данные выдаются отдельно
 test/
 test.zip
 
-# в репозитории из data/ только открытые данные: шрифты, корпуса и список фото Commons
+# рабочие чекпойнты обучения; итоговые веса лежат в artifacts/
+checkpoints/
+
+# в data/ держим только шрифты и корпуса
 data/*
 !data/fonts/
 !data/corpora/
-!data/commons_manifest.csv
+!data/README.md
 *.part
 
-# чекпойнты обучения (учитель ~110 МБ); веса студента лежат в artifacts/
-checkpoints/
+# собирается из teacher.pt.part* при первом запуске
+artifacts/teacher.pt

@@ -16,6 +16,15 @@ from .synth import SynthRenderer
 ROTATE_180 = Image.Transpose.ROTATE_180
 
 
+def load_rgb(path) -> Image.Image:
+    """RGB-картинка; прозрачный фон (так сохранена часть рукописного датасета) заменяется белым."""
+    img = Image.open(path)
+    if img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info:
+        img = img.convert("RGBA")
+        return Image.alpha_composite(Image.new("RGBA", img.size, "white"), img).convert("RGB")
+    return img.convert("RGB")
+
+
 class SynthSource:
     """Синтетический кроп однозначно задаётся (seed, epoch, index): каждая эпоха — новые картинки."""
 
@@ -37,7 +46,7 @@ class FileSource:
         return len(self.paths)
 
     def __call__(self, i: int, epoch: int = 0) -> Image.Image:
-        return Image.open(self.paths[i]).convert("RGB")
+        return load_rgb(self.paths[i])
 
 
 def augment_real(rng: np.random.Generator, img: Image.Image) -> Image.Image:
@@ -67,22 +76,24 @@ class OrientDataset(Dataset):
       "fixed"  — поворот зависит только от индекса (валидация);
       "none"   — без поворота (разметка ровных кропов учителем).
     soft — вероятность учителя, что ровный кроп выглядит перевёрнутым; по умолчанию 0.
+    repeat — сколько раз источник проходит за эпоху; повторы получают разные повороты и аугментации.
     """
 
     def __init__(self, source, heights: tuple[int, ...], seed: int, rotation: str = "random",
-                 soft: np.ndarray | None = None, augment: bool = False):
+                 soft: np.ndarray | None = None, augment: bool = False, repeat: int = 1):
         self.source, self.heights, self.seed = source, heights, seed
-        self.rotation, self.augment = rotation, augment
+        self.rotation, self.augment, self.repeat = rotation, augment, repeat
         self.soft = np.zeros(len(source), np.float32) if soft is None else soft.astype(np.float32)
         self.epoch = 0
 
     def __len__(self):
-        return len(self.source)
+        return len(self.source) * self.repeat
 
     def image(self, i: int) -> tuple[Image.Image, float]:
         """Кроп после аугментаций и поворота и его метка."""
         key = [self.seed, i] if self.rotation != "random" else [self.seed, self.epoch, i]
         rng = np.random.default_rng(key)
+        i %= len(self.source)
         img = self.source(i, self.epoch if self.rotation == "random" else 0)
         if self.augment:
             img = augment_real(rng, img)
@@ -108,5 +119,4 @@ class FolderDataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, i):
-        img = Image.open(self.paths[i]).convert("RGB")
-        return torch.from_numpy(to_canvas(img, self.height))
+        return torch.from_numpy(to_canvas(load_rgb(self.paths[i]), self.height))

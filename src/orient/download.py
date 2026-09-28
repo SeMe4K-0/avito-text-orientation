@@ -1,21 +1,18 @@
-"""Скачивание внешних данных и предобученных весов.
+"""Скачивание шрифтов, текстовых корпусов и предобученных весов.
 
-Все источники открытые и не требуют токенов. Функции можно перезапускать:
+Источники открытые и не требуют токенов. Функции можно перезапускать:
 уже скачанное пропускается, оборванные загрузки докачиваются.
 """
-import re
 import tarfile
 import time
 from pathlib import Path
 from urllib.parse import quote
 
-import pandas as pd
 import requests
 from tqdm.auto import tqdm
 
 from .paths import DATA
 
-# Wikimedia требует осмысленный User-Agent со ссылкой на проект.
 HEADERS = {"User-Agent": "avito-text-orientation/1.0 (https://github.com/SeMe4K-0/avito-text-orientation)"}
 
 LEIPZIG_URL = "https://downloads.wortschatz-leipzig.de/corpora/{}.tar.gz"
@@ -49,15 +46,6 @@ FONT_FAMILIES = [
     # декоративные
     "ruslandisplay", "stalinistone", "pressstart2p", "seymourone",
 ]
-
-COMMONS_API = "https://commons.wikimedia.org/w/api.php"
-# Корневые категории Commons с фото русского текста в реальных сценах.
-COMMONS_SEEDS = [
-    "Russian-language signs", "Signs in Russia", "Shop signs in Russia", "Advertisements in Russia",
-    "Billboards in Russia", "Signs in Moscow", "Shop signs in Moscow", "Signs in Saint Petersburg",
-    "Price tags",
-]
-OPEN_LICENSE = re.compile(r"^(CC0|CC[ -]BY|Public domain|PD)", re.IGNORECASE)
 
 PRETRAINED = ["convnext_tiny.fb_in22k_ft_in1k", "lcnet_050.ra2_in1k"]
 
@@ -126,83 +114,6 @@ def download_fonts(families=FONT_FAMILIES, dst: Path = DATA / "fonts") -> list[s
         for path in files.get(family, []):
             download_file(GF_RAW_URL.format(quote(path)), dst / family / Path(path).name)
     return [f for f in families if f not in files]
-
-
-def _commons(params: dict) -> dict:
-    for attempt in range(5):
-        try:
-            r = requests.get(COMMONS_API, params={**params, "format": "json"}, headers=HEADERS, timeout=60)
-            r.raise_for_status()
-            return r.json()
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
-            time.sleep(2 ** attempt)
-    raise RuntimeError(f"Commons API не отвечает: {params}")
-
-
-def commons_manifest(path: Path = DATA / "commons_manifest.csv", seeds=COMMONS_SEEDS, depth: int = 3,
-                     max_categories: int = 600, width: int = 1024) -> pd.DataFrame:
-    """Список фото из категорий Commons (обход в ширину) с адресом превью, автором и лицензией.
-
-    Список сохраняется в репозиторий: состав категорий со временем меняется,
-    а скачивание по сохранённому списку даёт тот же набор фото.
-    """
-    if path.exists():
-        return pd.read_csv(path)
-    titles, seen, queue = set(), set(), [(f"Category:{s}", 0) for s in seeds]
-    with tqdm(desc="categories") as bar:
-        while queue and len(seen) < max_categories:
-            cat, d = queue.pop(0)
-            if cat in seen:
-                continue
-            seen.add(cat)
-            bar.update(1)
-            cont = {}
-            while True:
-                r = _commons({"action": "query", "list": "categorymembers", "cmtitle": cat,
-                              "cmtype": "file|subcat", "cmlimit": 500, **cont})
-                for m in r["query"]["categorymembers"]:
-                    if m["ns"] == 6 and m["title"].lower().endswith((".jpg", ".jpeg", ".png")):
-                        titles.add(m["title"])
-                    elif m["ns"] == 14 and d < depth:
-                        queue.append((m["title"], d + 1))
-                if "continue" not in r:
-                    break
-                cont = r["continue"]
-
-    rows, titles = [], sorted(titles)
-    for i in tqdm(range(0, len(titles), 50), desc="imageinfo"):
-        r = _commons({"action": "query", "titles": "|".join(titles[i:i + 50]), "prop": "imageinfo",
-                      "iiprop": "url|extmetadata", "iiurlwidth": width,
-                      "iiextmetadatafilter": "LicenseShortName|Artist"})
-        for page in r["query"]["pages"].values():
-            info = page.get("imageinfo", [{}])[0]
-            meta = info.get("extmetadata", {})
-            rows.append({
-                "pageid": page.get("pageid"), "title": page["title"],
-                "url": info.get("thumburl") or info.get("url"),
-                "license": meta.get("LicenseShortName", {}).get("value", ""),
-                "artist": re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", "")).strip(),
-                "source": info.get("descriptionurl"),
-            })
-    df = pd.DataFrame(rows).dropna(subset=["pageid", "url"])
-    df = df[df.license.str.match(OPEN_LICENSE)].sort_values("pageid").reset_index(drop=True)
-    df["pageid"] = df.pageid.astype(int)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
-    return df
-
-
-def download_commons(manifest: pd.DataFrame, dst: Path = DATA / "photos" / "commons") -> list[Path]:
-    """Качает превью фото по списку. Недоступные файлы пропускает и сообщает их число."""
-    out, failed = [], 0
-    for row in tqdm(manifest.itertuples(), total=len(manifest), desc="commons"):
-        try:
-            out.append(download_file(row.url, dst / f"{row.pageid}.jpg"))
-        except requests.HTTPError:
-            failed += 1
-    if failed:
-        print(f"не скачалось: {failed}")
-    return out
 
 
 def download_pretrained(names=PRETRAINED) -> None:

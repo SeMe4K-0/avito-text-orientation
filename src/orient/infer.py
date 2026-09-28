@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from .dataset import FolderDataset
 from .metrics import sigmoid
 from .preprocess import to_canvas
-from .train import predict
+from .train import device, predict
 
 
 class Deployed(torch.nn.Module):
@@ -33,15 +33,16 @@ def test_paths(test_dir: Path) -> list[Path]:
 
 
 def predict_test(model, height: int, paths: list[Path], temperature: float, tta: bool = True,
-                 batch_size: int = 256, workers: int = 4) -> pd.DataFrame:
-    """Инференс на CPU: так результат не зависит от GPU/MPS и воспроизводится побитово."""
-    prev = torch.are_deterministic_algorithms_enabled()
-    torch.use_deterministic_algorithms(True)
-    try:
-        loader = DataLoader(FolderDataset(paths, height), batch_size=batch_size, num_workers=workers)
-        z, _ = predict(model.cpu(), loader, torch.device("cpu"), tta=tta)
-    finally:
-        torch.use_deterministic_algorithms(prev)
+                 batch_size: int = 256, workers: int = 4, dev: torch.device | None = None) -> pd.DataFrame:
+    """Инференс без обучаемых операций: результат зависит только от весов и входа.
+
+    Устройство влияет на последние знаки (порядок суммирования), расхождение CPU и MPS
+    порядка 1e-6 в вероятности. `torch.use_deterministic_algorithms` здесь не нужен:
+    свёртки на CPU и так детерминированы, а он замедляет инференс в 14 раз.
+    """
+    dev = dev or device()
+    loader = DataLoader(FolderDataset(paths, height), batch_size=batch_size, num_workers=workers)
+    z, _ = predict(model.to(dev), loader, dev, tta=tta)
     return pd.DataFrame({"image_id": [p.stem for p in paths], "p_180": sigmoid(z / temperature)})
 
 
