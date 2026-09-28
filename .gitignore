@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+
+# данные и промежуточные артефакты в репозиторий не кладём
+test/
+test.zip
+data/
+checkpoints/
+runs/
